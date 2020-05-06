@@ -2,6 +2,7 @@ package com.chacko.ben.dnshealthcheck;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.security.Security;
 
 import org.apache.http.conn.DnsResolver;
 import org.apache.http.impl.conn.SystemDefaultDnsResolver;
@@ -24,7 +25,10 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 public class DnsHealthCheckController {
-	String error = "";
+	private static final int maxElapsedTime = (5 * 60 * 1000);
+	private static boolean loop;
+	private String msg;
+	
 
 	Logger logger = LoggerFactory.getLogger(DnsHealthCheckController.class);
 
@@ -51,13 +55,60 @@ public class DnsHealthCheckController {
 					builder.append("Resolved address: " + address);
 					builder.append("<br/>");
 				}
+				Thread.sleep(100); // throttle the execution 
 			} catch (UnknownHostException e) {
 				logger.error("Caught UnknownHostException while trying to resolve address: " + hostname);
 				return e.getMessage();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
 			} finally {
 				count--;
 			}
 		}
 		return builder.toString();
+	}
+	
+	@RequestMapping(value = "/loop/{hostname}", method = RequestMethod.GET)
+	String loopDNSLookup(@PathVariable("hostname") String hostname) {
+		loop = true;
+		long startTime = System.currentTimeMillis();
+		DnsResolver dnsResolver = new SystemDefaultDnsResolver();
+		InetAddress[] addresses;
+		while (loop && shouldContinue(startTime)) {
+			try {
+				addresses = dnsResolver.resolve(hostname);
+				for (int i = 0; i < addresses.length; i++) {
+					String address = addresses[i].toString();
+					logger.info("Rosolved address: " + address);
+				}
+				Thread.sleep(100); // throttle execution
+				msg = "Finished BoshDNS loop test!";
+			} catch (UnknownHostException e) {
+				logger.error("Caught UnknownHostException while trying to resolve address: " + hostname);
+				return e.getMessage();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			} 
+		}
+		return msg;
+	}
+	
+	@RequestMapping(value = "/loop/stop", method = RequestMethod.GET)
+	void stopDNSLookup() {
+		loop = false;
+	}
+	
+	@RequestMapping(value = "/cachingStrategy", method = RequestMethod.GET)
+	void printCachingStrategy() {
+	        System.out.println("NegativeCaching Strategy " + Security.getProperty("networkaddress.cache.negative.ttl"));
+	        System.out.println("NegativeCaching Strategy " + System.getProperty("networkaddress.cache.negative.ttl"));
+	}
+	
+	private boolean shouldContinue(long startTime) {
+		if(!((System.currentTimeMillis() - startTime) < maxElapsedTime)) {
+			msg = "Max loop time of 5min has expired";
+			return false;
+		}
+		return true;
 	}
 }
